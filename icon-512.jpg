@@ -1,0 +1,165 @@
+// Types
+export interface Student {
+  id: string
+  name: string
+  school: number
+  guardian: string
+  phone: string
+  vanA: boolean
+  vanB: boolean
+  address: string
+  orderA: number
+  orderB: number
+}
+
+export interface DailyState {
+  absences: Record<string, boolean>
+  delivered: Record<string, boolean>
+}
+
+export interface Messages {
+  camino: string
+  puerta: string
+  inicio: string
+  fin: string
+}
+
+export interface Schedule {
+  entry: string
+  exit: string
+}
+
+export interface AppData {
+  schools: string[]
+  students: Student[]
+  schedules: Record<number, Schedule>
+  messages: Messages
+  dailyState: Record<string, DailyState>
+}
+
+const STORAGE_KEY = "ruta-escolar-v5"
+
+const DEFAULT_DATA: AppData = {
+  schools: ["Colegio 1", "Colegio 2", "Colegio 3"],
+  students: [],
+  schedules: {
+    0: { entry: "08:00", exit: "15:00" },
+    1: { entry: "08:00", exit: "15:00" },
+    2: { entry: "08:00", exit: "15:00" },
+  },
+  messages: {
+    camino:
+      "Hola {apoderado}, el furgon escolar esta en camino a recoger a {alumno}. Llegamos pronto.",
+    puerta:
+      "Hola {apoderado}, el furgon esta en puerta para recoger a {alumno}.",
+    inicio:
+      "Buenos dias {apoderado}, iniciamos la ruta del furgon {furgon}. Recogeremos a {alumno} en breve.",
+    fin: "Hola {apoderado}, {alumno} fue entregado en {colegio} sin novedades.",
+  },
+  dailyState: {},
+}
+
+export function loadData(): AppData {
+  if (typeof window === "undefined") return { ...DEFAULT_DATA }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<AppData>
+      return {
+        ...DEFAULT_DATA,
+        ...parsed,
+        messages: { ...DEFAULT_DATA.messages, ...(parsed.messages || {}) },
+        schedules: { ...DEFAULT_DATA.schedules, ...(parsed.schedules || {}) },
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { ...DEFAULT_DATA }
+}
+
+export function saveData(data: AppData): void {
+  if (typeof window === "undefined") return
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+  } catch {
+    // ignore
+  }
+}
+
+// Phone formatting for Chilean numbers
+export function formatPhone(raw: string): string {
+  if (!raw) return ""
+  const p = raw.replace(/[\s\-()]/g, "")
+  if (/^9\d{8}$/.test(p)) return "+56" + p
+  if (/^569\d{8}$/.test(p)) return "+" + p
+  if (/^\+569\d{8}$/.test(p)) return p
+  if (/^56\d{9}$/.test(p)) return "+" + p
+  if (/^\+56\d{9}$/.test(p)) return p
+  if (!p.startsWith("+")) return "+" + p
+  return p
+}
+
+export function waNumber(phone: string): string {
+  const p = formatPhone(phone)
+  return p.startsWith("+") ? p.slice(1) : p
+}
+
+export function buildMessage(
+  template: string,
+  student: Student,
+  schools: string[],
+  van: string
+): string {
+  return template
+    .replace(/{apoderado}/g, student.guardian || "Apoderado")
+    .replace(/{alumno}/g, student.name)
+    .replace(/{colegio}/g, schools[student.school] || "el colegio")
+    .replace(/{furgon}/g, "Furgon " + van)
+}
+
+export function todayKey(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+export function getDailyState(data: AppData): DailyState {
+  const key = todayKey()
+  if (!data.dailyState[key]) {
+    data.dailyState[key] = { absences: {}, delivered: {} }
+  }
+  return data.dailyState[key]
+}
+
+export function getOrderedStudents(data: AppData, van: string): Student[] {
+  const vanKey = `van${van}` as keyof Student
+  const orderKey = `order${van}` as keyof Student
+  return data.students
+    .filter((s) => s[vanKey])
+    .sort(
+      (a, b) =>
+        ((a[orderKey] as number) || 999) - ((b[orderKey] as number) || 999)
+    )
+}
+
+// Send message via WhatsApp or SMS
+export function sendMessage(
+  phone: string,
+  message: string,
+  method: "whatsapp" | "sms"
+): void {
+  if (!phone) return
+  if (method === "whatsapp") {
+    window.open(
+      `https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(message)}`,
+      "_blank"
+    )
+  } else {
+    const formatted = formatPhone(phone)
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent)
+    const separator = isIOS ? "&" : "?"
+    window.open(
+      `sms:${formatted}${separator}body=${encodeURIComponent(message)}`,
+      "_blank"
+    )
+  }
+}

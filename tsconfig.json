@@ -1,0 +1,32 @@
+-- Table to track which routes are currently active (broadcasting GPS)
+CREATE TABLE IF NOT EXISTS public.active_routes (
+  id TEXT PRIMARY KEY,
+  is_active BOOLEAN DEFAULT false,
+  started_at TIMESTAMPTZ,
+  driver_name TEXT DEFAULT 'Conductor',
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.active_routes ENABLE ROW LEVEL SECURITY;
+
+-- Anyone can read if a route is active
+CREATE POLICY "Anyone can read active routes"
+  ON public.active_routes FOR SELECT
+  TO anon, authenticated
+  USING (true);
+
+-- Anyone can insert active routes
+CREATE POLICY "Anyone can insert active routes"
+  ON public.active_routes FOR INSERT
+  TO anon, authenticated
+  WITH CHECK (true);
+
+-- Anyone can update active routes
+CREATE POLICY "Anyone can update active routes"
+  ON public.active_routes FOR UPDATE
+  TO anon, authenticated
+  USING (true);
+
+-- Seed initial route entries
+INSERT INTO public.active_routes (id, is_active) VALUES ('A', false), ('B', false)
+ON CONFLICT (id) DO NOTHING;

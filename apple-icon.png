@@ -1,0 +1,304 @@
+"use client"
+
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  type ReactNode,
+} from "react"
+import {
+  type AppData,
+  type Student,
+  loadData,
+  saveData,
+  getDailyState,
+  getOrderedStudents,
+  buildMessage,
+  sendMessage,
+  todayKey,
+} from "./store"
+
+interface AppContextType {
+  data: AppData
+  van: string
+  sendMethod: "whatsapp" | "sms"
+  currentView: string
+  toggleVan: () => void
+  setSendMethod: (m: "whatsapp" | "sms") => void
+  setCurrentView: (v: string) => void
+  orderedStudents: () => Student[]
+  isAbsent: (id: string) => boolean
+  isDelivered: (id: string) => boolean
+  toggleAbsent: (id: string) => void
+  toggleDelivered: (id: string) => void
+  resetDay: () => void
+  sendCamino: (id: string) => void
+  sendPuerta: (id: string) => void
+  saveStudent: (student: Partial<Student>, id?: string) => void
+  deleteStudent: (id: string) => void
+  moveStudent: (id: string, dir: number) => void
+  saveSchools: (schools: string[]) => void
+  saveMessages: (messages: AppData["messages"]) => void
+  saveSchedule: (index: number, entry: string, exit: string) => void
+  updateData: (fn: (data: AppData) => AppData) => void
+  flash: (msg: string, type?: "ok" | "err" | "info") => void
+  toast: { msg: string; type: string; show: boolean }
+}
+
+const AppContext = createContext<AppContextType | null>(null)
+
+export function useApp() {
+  const ctx = useContext(AppContext)
+  if (!ctx) throw new Error("useApp must be used within AppProvider")
+  return ctx
+}
+
+export function AppProvider({ children }: { children: ReactNode }) {
+  const [data, setData] = useState<AppData>(() => loadData())
+  const [van, setVan] = useState("A")
+  const [sendMethod, setSendMethod] = useState<"whatsapp" | "sms">("whatsapp")
+  const [currentView, setCurrentView] = useState("ruta")
+  const [toast, setToast] = useState({ msg: "", type: "ok", show: false })
+
+  useEffect(() => {
+    setData(loadData())
+  }, [])
+
+  const persist = useCallback(
+    (newData: AppData) => {
+      setData(newData)
+      saveData(newData)
+    },
+    []
+  )
+
+  const flash = useCallback((msg: string, type: "ok" | "err" | "info" = "ok") => {
+    setToast({ msg, type, show: true })
+    setTimeout(() => setToast((t) => ({ ...t, show: false })), 2800)
+  }, [])
+
+  const toggleVan = useCallback(() => {
+    setVan((v) => (v === "A" ? "B" : "A"))
+  }, [])
+
+  const orderedStudents = useCallback(() => {
+    return getOrderedStudents(data, van)
+  }, [data, van])
+
+  const isAbsent = useCallback(
+    (id: string) => !!getDailyState(data).absences[id],
+    [data]
+  )
+
+  const isDelivered = useCallback(
+    (id: string) => !!getDailyState(data).delivered[id],
+    [data]
+  )
+
+  const toggleAbsent = useCallback(
+    (id: string) => {
+      const newData = { ...data, dailyState: { ...data.dailyState } }
+      const key = todayKey()
+      const state = { ...(newData.dailyState[key] || { absences: {}, delivered: {} }) }
+      state.absences = { ...state.absences }
+      state.delivered = { ...state.delivered }
+      if (state.absences[id]) {
+        delete state.absences[id]
+      } else {
+        state.absences[id] = true
+        delete state.delivered[id]
+      }
+      newData.dailyState[key] = state
+      persist(newData)
+    },
+    [data, persist]
+  )
+
+  const toggleDelivered = useCallback(
+    (id: string) => {
+      const newData = { ...data, dailyState: { ...data.dailyState } }
+      const key = todayKey()
+      const state = { ...(newData.dailyState[key] || { absences: {}, delivered: {} }) }
+      state.absences = { ...state.absences }
+      state.delivered = { ...state.delivered }
+      if (state.delivered[id]) {
+        delete state.delivered[id]
+      } else {
+        state.delivered[id] = true
+        delete state.absences[id]
+      }
+      newData.dailyState[key] = state
+      persist(newData)
+    },
+    [data, persist]
+  )
+
+  const resetDay = useCallback(() => {
+    const newData = { ...data, dailyState: { ...data.dailyState } }
+    newData.dailyState[todayKey()] = { absences: {}, delivered: {} }
+    persist(newData)
+    flash("Dia reseteado", "info")
+  }, [data, persist, flash])
+
+  const sendCamino = useCallback(
+    (id: string) => {
+      const s = data.students.find((x) => x.id === id)
+      if (!s) return
+      if (!s.phone) {
+        flash("Sin numero registrado", "err")
+        return
+      }
+      const msg = buildMessage(data.messages.camino, s, data.schools, van)
+      sendMessage(s.phone, msg, sendMethod)
+      flash(`${s.name} - En Camino`)
+    },
+    [data, van, sendMethod, flash]
+  )
+
+  const sendPuerta = useCallback(
+    (id: string) => {
+      const s = data.students.find((x) => x.id === id)
+      if (!s) return
+      if (!s.phone) {
+        flash("Sin numero registrado", "err")
+        return
+      }
+      const msg = buildMessage(data.messages.puerta, s, data.schools, van)
+      sendMessage(s.phone, msg, sendMethod)
+      flash(`${s.name} - En Puerta`)
+    },
+    [data, van, sendMethod, flash]
+  )
+
+  const saveStudent = useCallback(
+    (studentData: Partial<Student>, id?: string) => {
+      const newData = { ...data, students: [...data.students] }
+      if (!id) {
+        const newStudent: Student = {
+          id: Date.now().toString(),
+          name: studentData.name || "",
+          school: studentData.school || 0,
+          guardian: studentData.guardian || "",
+          phone: studentData.phone || "",
+          vanA: studentData.vanA || false,
+          vanB: studentData.vanB || false,
+          address: studentData.address || "",
+          orderA: newData.students.length + 1,
+          orderB: newData.students.length + 1,
+        }
+        newData.students.push(newStudent)
+        persist(newData)
+        flash("Alumno agregado")
+      } else {
+        const idx = newData.students.findIndex((s) => s.id === id)
+        if (idx >= 0) {
+          newData.students[idx] = { ...newData.students[idx], ...studentData }
+          persist(newData)
+          flash("Alumno actualizado")
+        }
+      }
+    },
+    [data, persist, flash]
+  )
+
+  const deleteStudent = useCallback(
+    (id: string) => {
+      const newData = {
+        ...data,
+        students: data.students.filter((s) => s.id !== id),
+      }
+      persist(newData)
+      flash("Eliminado")
+    },
+    [data, persist, flash]
+  )
+
+  const moveStudent = useCallback(
+    (id: string, dir: number) => {
+      const orderKey = `order${van}` as "orderA" | "orderB"
+      const list = getOrderedStudents(data, van)
+      const idx = list.findIndex((s) => s.id === id)
+      if (idx < 0 || idx + dir < 0 || idx + dir >= list.length) return
+
+      const newData = { ...data, students: [...data.students] }
+      const aIdx = newData.students.findIndex((s) => s.id === list[idx].id)
+      const bIdx = newData.students.findIndex((s) => s.id === list[idx + dir].id)
+      const tmp = newData.students[aIdx][orderKey]
+      newData.students[aIdx] = { ...newData.students[aIdx], [orderKey]: newData.students[bIdx][orderKey] }
+      newData.students[bIdx] = { ...newData.students[bIdx], [orderKey]: tmp }
+      persist(newData)
+    },
+    [data, van, persist]
+  )
+
+  const saveSchools = useCallback(
+    (schools: string[]) => {
+      persist({ ...data, schools })
+      flash("Colegios guardados")
+    },
+    [data, persist, flash]
+  )
+
+  const saveMessages = useCallback(
+    (messages: AppData["messages"]) => {
+      persist({ ...data, messages })
+      flash("Mensajes guardados")
+    },
+    [data, persist, flash]
+  )
+
+  const saveSchedule = useCallback(
+    (index: number, entry: string, exit: string) => {
+      const newData = {
+        ...data,
+        schedules: { ...data.schedules, [index]: { entry, exit } },
+      }
+      persist(newData)
+      flash("Horario guardado")
+    },
+    [data, persist, flash]
+  )
+
+  const updateData = useCallback(
+    (fn: (d: AppData) => AppData) => {
+      const newData = fn(data)
+      persist(newData)
+    },
+    [data, persist]
+  )
+
+  return (
+    <AppContext.Provider
+      value={{
+        data,
+        van,
+        sendMethod,
+        currentView,
+        toggleVan,
+        setSendMethod,
+        setCurrentView,
+        orderedStudents,
+        isAbsent,
+        isDelivered,
+        toggleAbsent,
+        toggleDelivered,
+        resetDay,
+        sendCamino,
+        sendPuerta,
+        saveStudent,
+        deleteStudent,
+        moveStudent,
+        saveSchools,
+        saveMessages,
+        saveSchedule,
+        updateData,
+        flash,
+        toast,
+      }}
+    >
+      {children}
+    </AppContext.Provider>
+  )
+}
